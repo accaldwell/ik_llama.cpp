@@ -1974,6 +1974,10 @@ bool gpt_params_find_arg(int argc, char ** argv, const std::string & arg, gpt_pa
         params.prefill_assistant = false;
         return true;
     }
+    if (arg == "--parallel-tool-calls") {
+        params.parallel_tool_calls = true;
+        return true;
+    }
     if (arg == "--slot-prompt-similarity" || arg == "-sps") {
         CHECK_ARG
         params.slot_prompt_similarity = std::stof(argv[i]);
@@ -2364,6 +2368,7 @@ void gpt_params_print_usage(int /*argc*/, char ** argv, const gpt_params & param
                                                                         "if suffix/prefix are specified, template will be disabled\n"
                                                                         "only commonly used templates are accepted:\n"
                                                                         "https://github.com/ggerganov/llama.cpp/wiki/Templates-supported-by-llama_chat_apply_template" });
+    options.push_back({ "main",        "           --parallel-tool-calls",  "enable parallel tool calls\n" });
     options.push_back({ "main",        "       --chat-template JINJA_TEMPLATE",
                                                                         "use jinja template for chat (default: disabled)\n" });
     options.push_back({ "main",        "       --chat-template-file file_with_JINJA_TEMPLATE",
@@ -2375,6 +2380,7 @@ void gpt_params_print_usage(int /*argc*/, char ** argv, const gpt_params & param
                         "- deepseek-legacy: keeps `<think>` tags in `message.content` while also populating `message.reasoning_content`\n"
                         "(default: none)", });
     options.push_back({ "main",      "       --chat-template-kwargs JSON",  "sets additional params for the json template parser"});
+    options.push_back({ "main",        "     -ptc, --parallel-tool-calls", "enable parallel tool calls\n"});
     options.push_back({ "main",      "       --reasoning-budget N",  "controls the amount of thinking allowed.\n"
                                                                                                      "currently only one of: -1 for unrestricted thinking budget, or 0 to disable thinking"
                                                                                                       "(default: -1)" });
