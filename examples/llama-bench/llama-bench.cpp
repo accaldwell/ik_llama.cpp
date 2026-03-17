@@ -93,6 +93,34 @@ static T stdev(const std::vector<T> & v) {
     return stdev;
 }
 
+template<typename T>
+static T median(const std::vector<T> & v) {
+    if (v.empty()) {
+        return 0;
+    }
+    std::vector<T> sorted(v);
+    std::sort(sorted.begin(), sorted.end());
+    size_t n = sorted.size();
+    if (n % 2 == 0) {
+        return (sorted[n/2 - 1] + sorted[n/2]) / (T)2;
+    }
+    return sorted[n/2];
+}
+
+template<typename T>
+static T mad(const std::vector<T> & v) {
+    if (v.size() <= 1) {
+        return 0;
+    }
+    T med = median(v);
+    std::vector<T> abs_devs;
+    abs_devs.reserve(v.size());
+    for (const auto & x : v) {
+        abs_devs.push_back(x > med ? x - med : med - x);
+    }
+    return median(abs_devs);
+}
+
 static std::string get_cpu_info() {
     std::string id;
 #ifdef __linux__
@@ -1380,6 +1408,14 @@ struct test {
         return ::stdev(samples_ns);
     }
 
+    uint64_t median_ns() const {
+        return ::median(samples_ns);
+    }
+
+    uint64_t mad_ns() const {
+        return ::mad(samples_ns);
+    }
+
     std::vector<double> get_ts() const {
         int n_tokens = (test_kind == TEST_KIND_GP ? 0 : n_prompt) + n_gen;
         std::vector<double> ts;
@@ -1393,6 +1429,14 @@ struct test {
 
     double stdev_ts() const {
         return ::stdev(get_ts());
+    }
+
+    double median_ts() const {
+        return ::median(get_ts());
+    }
+
+    double mad_ts() const {
+        return ::mad(get_ts());
     }
 
     static std::string get_backend() {
@@ -1429,7 +1473,8 @@ struct test {
             field == "model_size" || field == "model_n_params" ||
             field == "n_gpu_layers" || field == "main_gpu" ||
             field == "n_prompt" || field == "n_gen" || field == "mla_attn" || field == "attn_max_batch" ||
-            field == "avg_ns" || field == "stddev_ns" || field == "max_gpu") {
+            field == "avg_ns" || field == "stddev_ns" ||
+            field == "median_ns" || field == "mad_ns" || field == "max_gpu") {
             return INT;
         }
         if (field == "cuda" || field == "vulkan" || field == "kompute" || field == "metal" ||
@@ -1439,7 +1484,8 @@ struct test {
             field == "rcache" || field == "reuse" || field == "muge" || field == "sas") {
             return BOOL;
         }
-        if (field == "avg_ts" || field == "stddev_ts") {
+        if (field == "avg_ts" || field == "stddev_ts" ||
+            field == "median_ts" || field == "mad_ts") {
             return FLOAT;
         }
         return STRING;
@@ -1485,7 +1531,9 @@ struct test {
             cuda_params, override_tensor,
             std::to_string(n_prompt), std::to_string(n_gen), test_time,
             std::to_string(avg_ns()), std::to_string(stdev_ns()),
+            std::to_string(median_ns()), std::to_string(mad_ns()),
             std::to_string(avg_ts()), std::to_string(stdev_ts()),
+            std::to_string(median_ts()), std::to_string(mad_ts()),
             test_label
         };
         return values;
@@ -1505,7 +1553,9 @@ struct test {
             "no_fused_up_gate", "use_thp", "no_ooae", "rcache", "sas", "max_gpu", "cuda_params", "override_tensor",
             "n_prompt", "n_gen", "test_time",
             "avg_ns", "stddev_ns",
-            "avg_ts", "stddev_ts", "test",
+            "median_ns", "mad_ns",
+            "avg_ts", "stddev_ts",
+            "median_ts", "mad_ts", "test",
         };
         return fields;
     }
@@ -1639,6 +1689,9 @@ struct markdown_printer : public printer {
             return -30;
         }
         if (field == "t/s") {
+            return 16;
+        }
+        if (field == "t/s(median)") {
             return 16;
         }
         if (field == "size" || field == "params") {
@@ -1907,6 +1960,7 @@ struct markdown_printer : public printer {
         }
         fields.emplace_back("test");
         fields.emplace_back("t/s");
+        fields.emplace_back("t/s(median)");
 
         fprintf(fout, "|");
         for (const auto & field : fields) {
@@ -1965,6 +2019,9 @@ struct markdown_printer : public printer {
             } else if (field == "t/s") {
                 snprintf(buf, sizeof(buf), "%.2f ± %.2f", t.avg_ts(), t.stdev_ts());
                 value = buf;
+            } else if (field == "t/s(median)") {
+                snprintf(buf, sizeof(buf), "%.2f ± %.2f", t.median_ts(), t.mad_ts());
+                value = buf;
             } else if (vmap.find(field) != vmap.end()) {
                 value = vmap.at(field);
             } else {
@@ -1973,7 +2030,7 @@ struct markdown_printer : public printer {
             }
 
             int width = get_field_width(field);
-            if (field == "t/s") {
+            if (field == "t/s" || field == "t/s(median)") {
                 // HACK: the utf-8 character is 2 bytes
                 width += 1;
             }
