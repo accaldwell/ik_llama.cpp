@@ -247,7 +247,7 @@ int32_t cpu_get_num_math() {
  * Parse a hex string CPU mask (e.g., "0x3F" or "3F") into a 512-bit mask array.
  * Returns true if the mask is non-zero (affinity enabled).
  */
-static bool parse_cpu_mask(const std::string & hex_str, uint64_t mask[8]) {
+bool parse_cpu_mask(const std::string & hex_str, uint64_t mask[8]) {
     memset(mask, 0, 8 * sizeof(uint64_t));
 
     if (hex_str.empty() || hex_str == "0" || hex_str == "0x0") {

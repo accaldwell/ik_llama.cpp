@@ -940,32 +940,6 @@ enum test_kind_type {
     TEST_KIND_GP,
 };
 
-// Parse hex string CPU mask (e.g., "0x3F" or "3F") into a 512-bit mask array
-static bool parse_cpu_mask(const std::string & hex_str, uint64_t mask[8]) {
-    memset(mask, 0, 8 * sizeof(uint64_t));
-
-    if (hex_str.empty() || hex_str == "0" || hex_str == "0x0") {
-        return false;  // No affinity
-    }
-
-    std::string hex = hex_str;
-    if (hex.substr(0, 2) == "0x" || hex.substr(0, 2) == "0X") {
-        hex = hex.substr(2);
-    }
-
-    // Parse up to 128 hex digits (512 bits)
-    size_t len = std::min(hex.length(), (size_t)128);
-    for (size_t i = 0; i < len; i++) {
-        char c = hex[len - 1 - i];  // Reverse order (LSB first)
-        int val = (c >= '0' && c <= '9') ? c - '0' :
-                  (c >= 'a' && c <= 'f') ? c - 'a' + 10 :
-                  (c >= 'A' && c <= 'F') ? c - 'A' + 10 : 0;
-        mask[i / 16] |= (uint64_t)val << ((i % 16) * 4);
-    }
-
-    return true;
-}
-
 struct cmd_params_instance {
     test_kind_type test_kind;
     std::string model;

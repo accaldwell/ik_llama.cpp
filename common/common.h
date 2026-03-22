@@ -78,6 +78,7 @@ struct llama_control_vector_load_info;
 
 int32_t cpu_get_num_physical_cores();
 int32_t cpu_get_num_math();
+bool    parse_cpu_mask(const std::string & hex_str, uint64_t mask[8]);
 
 enum llama_example {
     LLAMA_EXAMPLE_COMMON,
