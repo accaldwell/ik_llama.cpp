@@ -258,6 +258,7 @@ struct cmd_params {
     std::vector<llama_model_tensor_buft_override> buft_overrides;
     ggml_numa_strategy numa;
     std::string cuda_params;
+    std::string cpu_mask;
     int reps;
     bool verbose;
     bool warmup;
@@ -304,6 +305,7 @@ static const cmd_params cmd_params_defaults = {
     /* buft_overrides       */ {},
     /* numa                 */ GGML_NUMA_STRATEGY_DISABLED,
     /* cuda_params          */ {},
+    /* cpu_mask             */ {},
     /* reps                 */ 5,
     /* verbose              */ false,
     /* warmup               */ true,
@@ -361,6 +363,7 @@ static void print_usage(int /* argc */, char ** argv) {
     printf("  -w, --warmup <0|1>                  (default: %s)\n", cmd_params_defaults.warmup ? "1" : "0");
     printf("  -rtr, --run-time-repack <0|1>       (default: %s)\n", cmd_params_defaults.repack ? "1" : "0");
     printf("  -cuda, --cuda-params <string>       (default: %s)\n", cmd_params_defaults.cuda_params.c_str());
+    printf("  -C, --cpu-mask <hex>                (default: %s)\n", cmd_params_defaults.cpu_mask.c_str());
     printf("  -mqkv, --merge-qkv                  (default: %s)\n", cmd_params_defaults.mqkv ? "1" : "0");
     printf("  -muge, --merge-up-gate-experts      (default: %s)\n", cmd_params_defaults.muge ? "1" : "0");
     printf("  -rcache, --rope-cache               (default: %s)\n", cmd_params_defaults.rcache ? "1" : "0");
@@ -795,6 +798,12 @@ static cmd_params parse_cmd_params(int argc, char ** argv) {
                 break;
             }
             params.cuda_params = argv[i];
+        } else if (arg == "-C" || arg == "--cpu-mask") {
+            if (++i >= argc) {
+                invalid_param = true;
+                break;
+            }
+            params.cpu_mask = argv[i];
         } else if (arg == "-mqkv" || arg == "--merge-qkv") {
             if (++i >= argc) {
                 invalid_param = true;
@@ -931,6 +940,32 @@ enum test_kind_type {
     TEST_KIND_GP,
 };
 
+// Parse hex string CPU mask (e.g., "0x3F" or "3F") into a 512-bit mask array
+static bool parse_cpu_mask(const std::string & hex_str, uint64_t mask[8]) {
+    memset(mask, 0, 8 * sizeof(uint64_t));
+
+    if (hex_str.empty() || hex_str == "0" || hex_str == "0x0") {
+        return false;  // No affinity
+    }
+
+    std::string hex = hex_str;
+    if (hex.substr(0, 2) == "0x" || hex.substr(0, 2) == "0X") {
+        hex = hex.substr(2);
+    }
+
+    // Parse up to 128 hex digits (512 bits)
+    size_t len = std::min(hex.length(), (size_t)128);
+    for (size_t i = 0; i < len; i++) {
+        char c = hex[len - 1 - i];  // Reverse order (LSB first)
+        int val = (c >= '0' && c <= '9') ? c - '0' :
+                  (c >= 'a' && c <= 'f') ? c - 'a' + 10 :
+                  (c >= 'A' && c <= 'F') ? c - 'A' + 10 : 0;
+        mask[i / 16] |= (uint64_t)val << ((i % 16) * 4);
+    }
+
+    return true;
+}
+
 struct cmd_params_instance {
     test_kind_type test_kind;
     std::string model;
@@ -953,6 +988,7 @@ struct cmd_params_instance {
     Ser  ser;
     std::vector<float> tensor_split;
     std::string cuda_params;
+    std::string cpu_mask;
     bool use_mmap;
     bool embeddings;
     bool repack = false;
@@ -1029,6 +1065,7 @@ struct cmd_params_instance {
         cparams.embeddings = embeddings;
         cparams.cuda_params = (void *)cuda_params.data();
         cparams.scheduler_async = sas;
+        parse_cpu_mask(cpu_mask, cparams.cpu_mask);
 
         return cparams;
     }
@@ -1083,6 +1120,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .ser          = */ ser,
                 /* .tensor_split = */ ts,
                 /* .cuda_params  = */ params.cuda_params,
+                /* .cpu_mask     = */ params.cpu_mask,
                 /* .use_mmap     = */ mmp,
                 /* .embeddings   = */ embd,
                 /* .repack       = */ params.repack,
@@ -1127,6 +1165,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .ser          = */ ser,
                 /* .tensor_split = */ ts,
                 /* .cuda_params  = */ params.cuda_params,
+                /* .cpu_mask     = */ params.cpu_mask,
                 /* .use_mmap     = */ mmp,
                 /* .embeddings   = */ embd,
                 /* .repack       = */ params.repack,
@@ -1171,6 +1210,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .ser          = */ ser,
                 /* .tensor_split = */ ts,
                 /* .cuda_params  = */ params.cuda_params,
+                /* .cpu_mask     = */ params.cpu_mask,
                 /* .use_mmap     = */ mmp,
                 /* .embeddings   = */ embd,
                 /* .repack       = */ params.repack,
@@ -1215,6 +1255,7 @@ static std::vector<cmd_params_instance> get_cmd_params_instances(const cmd_param
                 /* .ser          = */ ser,
                 /* .tensor_split = */ ts,
                 /* .cuda_params  = */ params.cuda_params,
+                /* .cpu_mask     = */ params.cpu_mask,
                 /* .use_mmap     = */ mmp,
                 /* .embeddings   = */ embd,
                 /* .repack       = */ params.repack,
