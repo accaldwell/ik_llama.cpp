@@ -275,6 +275,7 @@ struct gpt_params {
     std::string rpc_servers          = ""; // comma separated list of RPC servers
 
     std::string cuda_params          = ""; // comma separated list of cuda parameters key=value1,key2=value2
+    std::string cpu_mask             = ""; // CPU affinity mask (hex string, e.g., "0x3" for cores 0-1)
 
     std::vector<std::string> in_files;     // all input files
     std::vector<std::string> antiprompt;   // strings upon which more user input is prompted (a.k.a. reverse prompts)
