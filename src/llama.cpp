@@ -5603,6 +5603,16 @@ struct llama_context * llama_init_from_model(
     }
 #endif
 
+        // Disable fused_up_gate for Vulkan — the FUSED_UP_GATE op is not implemented
+        // in the Vulkan backend, causing the FFN gate/up projections to fall back to CPU
+        // and creating excessive graph splits with GPU<->CPU round-trips per layer.
+#if defined(GGML_USE_VULKAN)
+        if (cparams.fused_up_gate) {
+            LLAMA_LOG_WARN("%s: disabling fused_up_gate (not supported by Vulkan backend)\n", __func__);
+            cparams.fused_up_gate = false;
+        }
+#endif
+
 #ifdef GGML_USE_BLAS
         ctx->backend_blas = ggml_backend_blas_init();
         if (ctx->backend_blas == nullptr) {
