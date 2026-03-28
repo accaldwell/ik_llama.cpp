@@ -1,0 +1,4 @@
+#ifdef MUL_MAT_ID
+shared u16vec2 row_ids[BN];
+uint _ne1;
+#endif // MUL_MAT_ID
