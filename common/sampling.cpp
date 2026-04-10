@@ -505,8 +505,14 @@ static llama_token_data_array llama_sampling_prepare_impl(
 
     cur.resize(n_vocab);
 
-    for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
-        cur[token_id] = llama_token_data{token_id, logits[token_id], 0.0f};
+    if ((ctx_sampling->server_biases != nullptr) && (ctx_sampling->server_biases->size() == n_vocab)) {
+        for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+            cur[token_id] = llama_token_data{token_id, logits[token_id] + ctx_sampling->server_biases->at(token_id), 0.0f};
+        }
+    } else {
+        for (llama_token token_id = 0; token_id < n_vocab; token_id++) {
+            cur[token_id] = llama_token_data{token_id, logits[token_id], 0.0f};
+        }
     }
 
     ctx_sampling->cur_p = { cur.data(), cur.size(), false };
@@ -677,4 +683,30 @@ common_grammar_trigger common_grammar_trigger::from_json(const json& in) {
         out.token = (llama_token)in.at("token").get<int>();
     }
     return out;
+}
+
+llama_token common_sampler_sample_speculative(struct common_sampler * gsmpl, struct llama_context * ctx, int idx, float * out_prob) {
+    GGML_UNUSED(gsmpl);
+
+    float * logits = llama_get_logits_ith(ctx, idx);
+    const int n_vocab = llama_n_vocab(llama_get_model(ctx));
+
+    int best_id = 0;
+    float max_val = logits[0];
+    for (int i = 1; i < n_vocab; ++i) {
+        if (logits[i] > max_val) {
+            max_val = logits[i];
+            best_id = i;
+        }
+    }
+
+    if (out_prob) {
+        double sum_exp = 0.0;
+        for (int i = 0; i < n_vocab; ++i) {
+            sum_exp += exp((double)(logits[i] - max_val));
+        }
+        *out_prob = (float)(1.0 / sum_exp);
+    }
+
+    return best_id;
 }

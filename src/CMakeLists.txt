@@ -60,6 +60,7 @@ add_library(llama
             unicode.h
             unicode.cpp
             unicode-data.cpp
+            unicode-script-data.cpp
             )
 
 target_include_directories(llama PUBLIC . ../include)
@@ -71,4 +72,8 @@ target_link_libraries(llama PUBLIC ggml)
 if (BUILD_SHARED_LIBS)
     set_target_properties(llama PROPERTIES POSITION_INDEPENDENT_CODE ON)
     target_compile_definitions(llama PRIVATE LLAMA_SHARED LLAMA_BUILD)
+endif()
+
+if (GGML_MAX_CONTEXTS)
+    add_compile_definitions(GGML_MAX_CONTEXTS=${GGML_MAX_CONTEXTS})
 endif()

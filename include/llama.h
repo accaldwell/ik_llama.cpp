@@ -52,6 +52,9 @@
 #define LLAMA_STATE_SEQ_MAGIC   LLAMA_FILE_MAGIC_GGSQ
 #define LLAMA_STATE_SEQ_VERSION 3
 
+#define LLAMA_SERVER_MAGIC 0x6c6d7376u // 'lmsv'
+#define LLAMA_SERVER_VERSION 1 
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -189,6 +192,7 @@ extern "C" {
         LLAMA_FTYPE_MOSTLY_Q4_0_4_8      = 34, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_Q4_0_8_8      = 35, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_MXFP4         = 38, // except 1d tensors, 38 to be compatible with mainline
+        LLAMA_FTYPE_MOSTLY_Q1_0_G128     = 41, // except 1d tensors, 38 to be compatible with mainline
         //
         LLAMA_FTYPE_MOSTLY_Q6_0          = 135, // except 1d tensors
         LLAMA_FTYPE_MOSTLY_IQ1_BN        = 136, // except 1d tensors
@@ -378,6 +382,17 @@ extern "C" {
         int32_t  n_seq_max;
         int32_t  n_ubatch;
         int32_t  amb;
+        int32_t  fit_margin;
+        bool     fit;
+        int32_t  worst_graph_tokens;
+        enum ggml_type type_k_first;
+        enum ggml_type type_k_last;
+        enum ggml_type type_v_first;
+        enum ggml_type type_v_last;
+        int32_t n_k_first;
+        int32_t n_k_last;
+        int32_t n_v_first;
+        int32_t n_v_last;
 
         // proportion of the model (layers or rows) to offload to each GPU, size: llama_max_devices()
         const float * tensor_split;
@@ -424,6 +439,7 @@ extern "C" {
         uint32_t n_threads;         // number of threads to use for generation
         uint32_t n_threads_batch;   // number of threads to use for batch processing
         int32_t  max_extra_alloc;   // Max. additional VRAM the scheduler is allowed to allocate
+        int32_t  worst_case_tokens; // number of tokens to use when reserving worst case graphs
 
         enum llama_rope_scaling_type rope_scaling_type; // RoPE scaling type, from `enum llama_rope_scaling_type`
         enum llama_pooling_type      pooling_type;      // whether to pool (sum) embedding results by sequence id
@@ -445,6 +461,14 @@ extern "C" {
         enum ggml_type type_k; // data type for K cache [EXPERIMENTAL]
         enum ggml_type type_v; // data type for V cache [EXPERIMENTAL]
         enum ggml_type type_reduce; // data type for reduce operations
+        enum ggml_type type_k_first;
+        enum ggml_type type_k_last;
+        enum ggml_type type_v_first;
+        enum ggml_type type_v_last;
+        int32_t n_k_first;
+        int32_t n_k_last;
+        int32_t n_v_first;
+        int32_t n_v_last;
 
         // Keep the booleans together to avoid misalignment during copy-by-value.
         bool logits_all;  // the llama_decode() call computes all logits, not just the last one (DEPRECATED - set llama_batch.logits instead)
@@ -463,6 +487,7 @@ extern "C" {
         float thresh_experts;
         bool only_active_experts;
         bool k_cache_hadamard;  // if true, apply Hadamard transfrom to K-cache
+        bool v_cache_hadamard;  // if true, apply Hadamard transfrom to V-cache (needs FA)
         bool split_mode_graph_scheduling; // if true, force split mode graph scheduling
         //bool split_mode_f16;    // if true, cast intermediate results to f16 before copying to other GPUs
         bool scheduler_async;   // if true, with split mode "graph" graph evaluation will be done using multiple threads
@@ -1533,5 +1558,7 @@ const std::vector<std::pair<std::string, struct ggml_tensor *>> & llama_internal
 llama_token llama_sample_token_with_rng(struct llama_context * ctx, llama_token_data_array * candidates, std::mt19937 & rng);
 
 #endif // LLAMA_API_INTERNAL
+
+size_t llama_fill_from_utf8(void* utf8, void* cpts, void* scripts);
 
 #endif // LLAMA_H
