@@ -784,53 +784,35 @@ struct DequantizerQ5K_AVX2 final : public BaseDequantizer<block_q5_K> {
 struct DequantizerQ5K_AVX512 final : public BaseDequantizer<block_q5_K> {
     DequantizerQ5K_AVX512(const void * vx, size_t bx) : BaseDequantizer(vx, bx) {}
     
-    // Prepare both sub-blocks (j=0 and j=1) at once, returning 512-bit vectors
-    inline void prepare_x4(int i, __m512i& v512_0, __m512i& v512_1, 
+    // Prepare both sub-blocks (j=0 and j=1) at once, returning 512-bit vectors.
+    // Pack so low 256 lane = j=0, high 256 lane = j=1; the j=1 hbits view (>>4)
+    // is folded into the high lane of hbits_512, letting one shift+AND chain
+    // serve both sub-blocks.
+    inline void prepare_x4(int i, __m512i& v512_0, __m512i& v512_1,
                            __m512i& v512_2, __m512i& v512_3) {
-        // Load base 4-bit values for both sub-blocks
-        auto q4_j0 = _mm256_loadu_si256((const __m256i*)x[i].qs + 0);
-        auto q4_j1 = _mm256_loadu_si256((const __m256i*)x[i].qs + 2);
-        
-        // Process j=0 values (low/high nibbles)
-        auto v0_j0 = _mm256_and_si256(q4_j0, ml);
-        auto v1_j0 = _mm256_and_si256(_mm256_srli_epi16(q4_j0, 4), ml);
-        auto q4_j0_1 = _mm256_loadu_si256((const __m256i*)x[i].qs + 1);
-        auto v2_j0 = _mm256_and_si256(q4_j0_1, ml);
-        auto v3_j0 = _mm256_and_si256(_mm256_srli_epi16(q4_j0_1, 4), ml);
-        
-        // Process j=1 values (low/high nibbles)
-        auto v0_j1 = _mm256_and_si256(q4_j1, ml);
-        auto v1_j1 = _mm256_and_si256(_mm256_srli_epi16(q4_j1, 4), ml);
-        auto q4_j1_1 = _mm256_loadu_si256((const __m256i*)x[i].qs + 3);
-        auto v2_j1 = _mm256_and_si256(q4_j1_1, ml);
-        auto v3_j1 = _mm256_and_si256(_mm256_srli_epi16(q4_j1_1, 4), ml);
-        
-        // Load hbits and create both shifted versions
+        auto q4_j0_a = _mm256_loadu_si256((const __m256i*)x[i].qs + 0);
+        auto q4_j0_b = _mm256_loadu_si256((const __m256i*)x[i].qs + 1);
+        auto q4_j1_a = _mm256_loadu_si256((const __m256i*)x[i].qs + 2);
+        auto q4_j1_b = _mm256_loadu_si256((const __m256i*)x[i].qs + 3);
+        auto q4_a = _mm512_inserti32x8(_mm512_castsi256_si512(q4_j0_a), q4_j1_a, 1);
+        auto q4_b = _mm512_inserti32x8(_mm512_castsi256_si512(q4_j0_b), q4_j1_b, 1);
+
         auto hbits_256 = _mm256_loadu_si256((const __m256i *)x[i].qh);
-        auto hbits_j0 = hbits_256;
-        auto hbits_j1 = _mm256_srli_epi16(hbits_256, 4);
-        
-        // Apply hbits to j=0 values using 256-bit ops
-        v0_j0 = _mm256_or_si256(v0_j0, _mm256_and_si256(_mm256_slli_epi16(hbits_j0, 4), mh));
-        v1_j0 = _mm256_or_si256(v1_j0, _mm256_and_si256(_mm256_slli_epi16(hbits_j0, 3), mh));
-        v2_j0 = _mm256_or_si256(v2_j0, _mm256_and_si256(_mm256_slli_epi16(hbits_j0, 2), mh));
-        v3_j0 = _mm256_or_si256(v3_j0, _mm256_and_si256(_mm256_slli_epi16(hbits_j0, 1), mh));
-        
-        // Apply hbits to j=1 values using 256-bit ops
-        v0_j1 = _mm256_or_si256(v0_j1, _mm256_and_si256(_mm256_slli_epi16(hbits_j1, 4), mh));
-        v1_j1 = _mm256_or_si256(v1_j1, _mm256_and_si256(_mm256_slli_epi16(hbits_j1, 3), mh));
-        v2_j1 = _mm256_or_si256(v2_j1, _mm256_and_si256(_mm256_slli_epi16(hbits_j1, 2), mh));
-        v3_j1 = _mm256_or_si256(v3_j1, _mm256_and_si256(_mm256_slli_epi16(hbits_j1, 1), mh));
-        
-        // Combine j=0 and j=1 into 512-bit vectors
-        v512_0 = _mm512_inserti32x8(_mm512_castsi256_si512(v0_j0), v0_j1, 1);
-        v512_1 = _mm512_inserti32x8(_mm512_castsi256_si512(v1_j0), v1_j1, 1);
-        v512_2 = _mm512_inserti32x8(_mm512_castsi256_si512(v2_j0), v2_j1, 1);
-        v512_3 = _mm512_inserti32x8(_mm512_castsi256_si512(v3_j0), v3_j1, 1);
+        auto hbits = _mm512_inserti32x8(_mm512_castsi256_si512(hbits_256),
+                                        _mm256_srli_epi16(hbits_256, 4), 1);
+
+        v512_0 = _mm512_or_si512(_mm512_and_si512(q4_a, ml),
+                                 _mm512_and_si512(_mm512_slli_epi16(hbits, 4), mh));
+        v512_1 = _mm512_or_si512(_mm512_and_si512(_mm512_srli_epi16(q4_a, 4), ml),
+                                 _mm512_and_si512(_mm512_slli_epi16(hbits, 3), mh));
+        v512_2 = _mm512_or_si512(_mm512_and_si512(q4_b, ml),
+                                 _mm512_and_si512(_mm512_slli_epi16(hbits, 2), mh));
+        v512_3 = _mm512_or_si512(_mm512_and_si512(_mm512_srli_epi16(q4_b, 4), ml),
+                                 _mm512_and_si512(_mm512_slli_epi16(hbits, 1), mh));
     }
-    
-    const __m256i ml = _mm256_set1_epi8(0xf);
-    const __m256i mh = _mm256_set1_epi8(0x10);
+
+    const __m512i ml = _mm512_set1_epi8(0xf);
+    const __m512i mh = _mm512_set1_epi8(0x10);
 };
 #endif // HAVE_FANCY_SIMD
 
