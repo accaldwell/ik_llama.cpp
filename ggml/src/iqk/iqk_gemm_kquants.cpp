@@ -13,6 +13,16 @@
 
 namespace {
 
+#ifdef HAVE_FANCY_SIMD
+// Pack two 256-bit lanes into one 512-bit value (low = lo, high = hi).
+static inline __m512i pack512(__m256i lo, __m256i hi) {
+    return _mm512_inserti32x8(_mm512_castsi256_si512(lo), hi, 1);
+}
+static inline __m512 pack512(__m256 lo, __m256 hi) {
+    return _mm512_insertf32x8(_mm512_castps256_ps512(lo), hi, 1);
+}
+#endif
+
 // Handles q4_K and q5_K scales/mins
 struct Scales8K {
     template <typename Q8>
@@ -794,12 +804,11 @@ struct DequantizerQ5K_AVX512 final : public BaseDequantizer<block_q5_K> {
         auto q4_j0_b = _mm256_loadu_si256((const __m256i*)x[i].qs + 1);
         auto q4_j1_a = _mm256_loadu_si256((const __m256i*)x[i].qs + 2);
         auto q4_j1_b = _mm256_loadu_si256((const __m256i*)x[i].qs + 3);
-        auto q4_a = _mm512_inserti32x8(_mm512_castsi256_si512(q4_j0_a), q4_j1_a, 1);
-        auto q4_b = _mm512_inserti32x8(_mm512_castsi256_si512(q4_j0_b), q4_j1_b, 1);
+        auto q4_a = pack512(q4_j0_a, q4_j1_a);
+        auto q4_b = pack512(q4_j0_b, q4_j1_b);
 
         auto hbits_256 = _mm256_loadu_si256((const __m256i *)x[i].qh);
-        auto hbits = _mm512_inserti32x8(_mm512_castsi256_si512(hbits_256),
-                                        _mm256_srli_epi16(hbits_256, 4), 1);
+        auto hbits = pack512(hbits_256, _mm256_srli_epi16(hbits_256, 4));
 
         v512_0 = _mm512_or_si512(_mm512_and_si512(q4_a, ml),
                                  _mm512_and_si512(_mm512_slli_epi16(hbits, 4), mh));
@@ -1148,6 +1157,13 @@ static void mul_mat_kquant_q8_2_X4_AVX512(int n, const void * vx, size_t bx, con
                 }
             }
 
+            // Pre-build 512-bit scales (skipped on the signed nrc_y==1 fast path,
+            // where scales[] is mutated per-iy with dy and folded into d_scales512 directly).
+            [[maybe_unused]] __m512 scales512;
+            if constexpr (!(is_signed && nrc_y == 1)) {
+                scales512 = pack512(scales[0], scales[1]);
+            }
+
             // Left operand of dpbusd (unsigned: deq bits; signed: unsigned-magnitude us[]).
             __m512i v512_0, v512_1, v512_2, v512_3;
             // Signed path only: sign vectors applied to q8 loads before the dot product.
@@ -1163,19 +1179,19 @@ static void mul_mat_kquant_q8_2_X4_AVX512(int n, const void * vx, size_t bx, con
                 deq.prepare_signed(i, 1, us);
                 bits_j1[0] = deq.bits.values[0]; bits_j1[1] = deq.bits.values[1];
                 bits_j1[2] = deq.bits.values[2]; bits_j1[3] = deq.bits.values[3];
-                v512_0 = _mm512_inserti32x8(_mm512_castsi256_si512(u0_j0), us[0], 1);
-                v512_1 = _mm512_inserti32x8(_mm512_castsi256_si512(u1_j0), us[1], 1);
-                v512_2 = _mm512_inserti32x8(_mm512_castsi256_si512(u2_j0), us[2], 1);
-                v512_3 = _mm512_inserti32x8(_mm512_castsi256_si512(u3_j0), us[3], 1);
+                v512_0 = pack512(u0_j0, us[0]);
+                v512_1 = pack512(u1_j0, us[1]);
+                v512_2 = pack512(u2_j0, us[2]);
+                v512_3 = pack512(u3_j0, us[3]);
             } else {
                 deq.prepare(i, 0);
                 auto v0_j0 = deq.bits.values[0], v1_j0 = deq.bits.values[1];
                 auto v2_j0 = deq.bits.values[2], v3_j0 = deq.bits.values[3];
                 deq.prepare(i, 1);
-                v512_0 = _mm512_inserti32x8(_mm512_castsi256_si512(v0_j0), deq.bits.values[0], 1);
-                v512_1 = _mm512_inserti32x8(_mm512_castsi256_si512(v1_j0), deq.bits.values[1], 1);
-                v512_2 = _mm512_inserti32x8(_mm512_castsi256_si512(v2_j0), deq.bits.values[2], 1);
-                v512_3 = _mm512_inserti32x8(_mm512_castsi256_si512(v3_j0), deq.bits.values[3], 1);
+                v512_0 = pack512(v0_j0, deq.bits.values[0]);
+                v512_1 = pack512(v1_j0, deq.bits.values[1]);
+                v512_2 = pack512(v2_j0, deq.bits.values[2]);
+                v512_3 = pack512(v3_j0, deq.bits.values[3]);
             }
 
             for (int iy = 0; iy < nrc_y; ++iy) {
@@ -1184,23 +1200,19 @@ static void mul_mat_kquant_q8_2_X4_AVX512(int n, const void * vx, size_t bx, con
 
                 __m512i q512_0, q512_1, q512_2, q512_3;
                 if constexpr (is_signed) {
-                    q512_0 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+0), bits_j0[0])),
-                                                _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+0), bits_j1[0]), 1);
-                    q512_1 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+1), bits_j0[1])),
-                                                _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+1), bits_j1[1]), 1);
-                    q512_2 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+2), bits_j0[2])),
-                                                _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+2), bits_j1[2]), 1);
-                    q512_3 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+3), bits_j0[3])),
-                                                _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+3), bits_j1[3]), 1);
+                    q512_0 = pack512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+0), bits_j0[0]),
+                                     _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+0), bits_j1[0]));
+                    q512_1 = pack512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+1), bits_j0[1]),
+                                     _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+1), bits_j1[1]));
+                    q512_2 = pack512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+2), bits_j0[2]),
+                                     _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+2), bits_j1[2]));
+                    q512_3 = pack512(_mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y0.qs+3), bits_j0[3]),
+                                     _mm256_sign_epi8(_mm256_loadu_si256((const __m256i*)y1.qs+3), bits_j1[3]));
                 } else {
-                    q512_0 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_loadu_si256((const __m256i*)y0.qs+0)),
-                                                _mm256_loadu_si256((const __m256i*)y1.qs+0), 1);
-                    q512_1 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_loadu_si256((const __m256i*)y0.qs+1)),
-                                                _mm256_loadu_si256((const __m256i*)y1.qs+1), 1);
-                    q512_2 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_loadu_si256((const __m256i*)y0.qs+2)),
-                                                _mm256_loadu_si256((const __m256i*)y1.qs+2), 1);
-                    q512_3 = _mm512_inserti32x8(_mm512_castsi256_si512(_mm256_loadu_si256((const __m256i*)y0.qs+3)),
-                                                _mm256_loadu_si256((const __m256i*)y1.qs+3), 1);
+                    q512_0 = pack512(_mm256_loadu_si256((const __m256i*)y0.qs+0), _mm256_loadu_si256((const __m256i*)y1.qs+0));
+                    q512_1 = pack512(_mm256_loadu_si256((const __m256i*)y0.qs+1), _mm256_loadu_si256((const __m256i*)y1.qs+1));
+                    q512_2 = pack512(_mm256_loadu_si256((const __m256i*)y0.qs+2), _mm256_loadu_si256((const __m256i*)y1.qs+2));
+                    q512_3 = pack512(_mm256_loadu_si256((const __m256i*)y0.qs+3), _mm256_loadu_si256((const __m256i*)y1.qs+3));
                 }
 
                 auto p0 = _mm512_dpbusd_epi32(_mm512_setzero_si512(), v512_0, q512_0);
@@ -1215,13 +1227,12 @@ static void mul_mat_kquant_q8_2_X4_AVX512(int n, const void * vx, size_t bx, con
                 __m512 d_scales512;
                 if constexpr (is_signed && nrc_y == 1) {
                     // scales[] already folded with dy in the nrc_y==1 fast-path above.
-                    d_scales512 = _mm512_insertf32x8(_mm512_castps256_ps512(scales[0]), scales[1], 1);
+                    d_scales512 = pack512(scales[0], scales[1]);
                 } else {
                     auto dy4_j0 = _mm_loadu_ps(d8 + 8*iy + 0);
-                    auto d4d8_j0 = _mm256_mul_ps(scales[0], _mm256_set_m128(dy4_j0, dy4_j0));
                     auto dy4_j1 = _mm_loadu_ps(d8 + 8*iy + 4);
-                    auto d4d8_j1 = _mm256_mul_ps(scales[1], _mm256_set_m128(dy4_j1, dy4_j1));
-                    d_scales512 = _mm512_insertf32x8(_mm512_castps256_ps512(d4d8_j0), d4d8_j1, 1);
+                    auto dy512 = pack512(_mm256_set_m128(dy4_j0, dy4_j0), _mm256_set_m128(dy4_j1, dy4_j1));
+                    d_scales512 = _mm512_mul_ps(scales512, dy512);
                 }
 
                 accd[iy] = _mm512_fmadd_ps(d_scales512, _mm512_cvtepi32_ps(sumi), accd[iy]);
